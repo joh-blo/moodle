@@ -1,0 +1,16 @@
+%%% -*- erlang -*-
+%%% _________________________________________________________________________
+%%%
+%%%   Application for the Raspberry Pi Zero W, equipped with the Pimoroni
+%%%   Moodle LED array.
+%%% _________________________________________________________________________
+
+{application,moodle ,
+ [{description, "Moodle server"},
+  {vsn,"%VSN%"},
+  {modules,[%MODULES%]},
+  {applications,[kernel,stdlib]},
+  {mod,{moodle_app,[]}}
+  ]
+}.
+
