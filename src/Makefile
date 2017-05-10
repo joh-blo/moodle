@@ -1,12 +1,10 @@
 include ../vsn.mk
-VSN = $(MOODLE_VSN)
-
-APP_NAME = moodle
-
 
 # ----------------------------------------------------
 # VARIABLES
 # ----------------------------------------------------
+
+APP_NAME = moodle
 
 MODULES = \
 	moodle \

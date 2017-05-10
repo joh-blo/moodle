@@ -2,10 +2,7 @@
 # Common Macros
 # ----------------------------------------------------
 include vsn.mk
-VSN = $(MOODLE_VSN)
 
-all:
-	cd src; make all
+SUB_DIRECTORIES = src
 
-clean:
-	cd src; make clean
+include ../meadow/priv/Makefile.subdir

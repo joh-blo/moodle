@@ -1,1 +1,1 @@
-MOODLE_VSN = 0.1
+VSN = 0.1
