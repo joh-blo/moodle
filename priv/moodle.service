@@ -15,8 +15,9 @@
 # Description:       Initialize tlp
 ### END INIT INFO
 
-. /lib/lsb/init-functions
+# . /lib/lsb/init-functions
 
+export HOME=/tmp
 MOODLE=/opt/src_my/moodle/priv/moodle
 [ -x $MOODLE ] || exit 0
 
