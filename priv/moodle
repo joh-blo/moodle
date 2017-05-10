@@ -1,0 +1,41 @@
+#!/bin/sh
+
+# moodle - system startup/shutdown
+#
+# Copyright (c) 2017 Johan Blom <Johan.Blom at dektech.com.au>
+# This software is licensed under the Apache v2 or later.
+
+ERL_ROOT_PATH=/opt/MA/otp/R19.3
+PATH=$ERL_ROOT_PATH/bin/:$PATH
+ERL=$ERL_ROOT_PATH/bin/erl
+ERLCALL=$ERL_ROOT_PATH/lib/erlang/lib/erl_interface-3.9.3/bin/erl_call
+
+[ -x $ERL ] || exit 0
+[ -x $ERLCALL ] || exit 0
+
+ARG1="$1"
+
+ERLHOSTNAMELIST=`hostname -I`
+set -- $ERLHOSTNAMELIST
+ERLHOSTNAME="moodle@$1"
+
+case $ARG1 in
+    start)
+        echo $ERL -setcookie "secret" \
+	     -name $ERLHOSTNAME \
+	     -pa /opt/src_my/meadow/ebin /opt/src_my/moodle/ebin\
+	     -run moodle
+	;;
+    status|\
+    stop|\
+    restart)
+        $ERLCALL -c "secret" -a 'moodle '$ARG1 -n $ERLHOSTNAME
+	;;
+
+     *)
+        echo "Usage: $0 start|stop|restart|force-reload|status" 1>&2
+        exit 3
+        ;;
+esac
+
+exit 0
