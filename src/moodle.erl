@@ -8,7 +8,7 @@
 -module(moodle).
 
 %% API
--export([start/0,stop/0]).
+-export([start/0,stop/0,status/0,restart/0]).
 
 
 %% @spec start() -> ok
@@ -25,3 +25,12 @@ start() ->
 %% @end
 stop() ->
     halt().
+
+status() ->
+    moodle_manager:status().
+
+restart() ->
+    application:stop(?MODULE),
+    application:start(?MODULE).
+
+
