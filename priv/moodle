@@ -21,10 +21,11 @@ ERLHOSTNAME="moodle@$1"
 
 case $ARG1 in
     start)
-        echo $ERL -setcookie "secret" \
+        $ERL -setcookie "secret" \
 	     -name $ERLHOSTNAME \
 	     -pa /opt/src_my/meadow/ebin /opt/src_my/moodle/ebin\
-	     -run moodle
+	     -run moodle\
+	     -detached
 	;;
     status|\
     stop|\
