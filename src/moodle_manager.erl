@@ -13,7 +13,8 @@
 %% API
 -export([start_link/0,
 	 start_alarm/0,stop_alarm/0,
-	 status/0]).
+	 load_cfg/0,
+	 status/0,status/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -22,7 +23,10 @@
 -define(SERVER, ?MODULE).
 
 -record(state,{
-	  alarm_status % (bool) Set to true if alar
+	  sensor_data, % Erlang node we get the sensor data from
+	  fetch_interval, % (int) Time, in seconds, between a fetch of data
+	  trigger_level,  % (int) Sensor level to trigger alarm
+	  alarm_status % (bool) Set to true if alarm is ringing
 	 }).
 
 %%%===================================================================
@@ -47,7 +51,14 @@ stop_alarm() ->
     gen_server:cast(?MODULE,stop_alarm).
 
 status() ->
-    gen_server:call(?MODULE,status).
+    gen_server:call(?MODULE,{status,all}).
+
+status(Key) ->
+    gen_server:call(?MODULE,{status,Key}).
+
+load_cfg() ->
+    gen_server:call(?MODULE,load_cfg).
+
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -66,7 +77,15 @@ status() ->
 %%--------------------------------------------------------------------
 init([]) ->
     process_flag(trap_exit, true),
-    {ok, #state{alarm_status=false}}.
+    ExternalNMFA=moodle_lib:get_cfg(moodle_external,undefined),
+    FetchInterval=moodle_lib:get_cfg(moodle_fetch_interval),
+    TriggerLevel=moodle_lib:get_cfg(moodle_trigger_level),
+    io:format("SensorNode=~p~n",[ExternalNMFA]),
+    start_timer(FetchInterval),
+    {ok, #state{sensor_data=ExternalNMFA,
+		fetch_interval=FetchInterval,
+		trigger_level=TriggerLevel,
+		alarm_status=false}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -82,21 +101,21 @@ init([]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call(fetch_data, _From, State) ->
-    %% Fetch sensor data from the server
-    %% Prior to get this working, we also need to register this aplication
-    %% in the server.
-    %% This includes:
-    %% - Give this aplication a role
-    %% - Give this aplication just enough capabillities to fulfill its task
-    Reply = ok,
+handle_call({status,Key}, _From, State) ->
+    %% Read the current status    
+    Reply=
+	[if Key==all;Key==alarm -> moodle_alarm:status(); true -> [] end]++
+	[if Key==all;Key==temp -> read_temp(); true -> [] end],
     {reply, Reply, State};
-handle_call(status, _From, State) ->
-    %% Read the current status
-    AlarmStatus=moodle_alarm:status(),
-    Temp=read_temp(),
-    Reply=[AlarmStatus,Temp],
-    {reply, Reply, State}.
+handle_call(load_cfg, _From, State) ->
+    %% Read the current status    
+    ExternalNMFA=moodle_lib:get_cfg(moodle_external,undefined),
+    FetchInterval=moodle_lib:get_cfg(moodle_fetch_interval),
+    TriggerLevel=moodle_lib:get_cfg(moodle_trigger_level),
+    NewState=State#state{sensor_data=ExternalNMFA,
+			 fetch_interval=FetchInterval,
+			 trigger_level=TriggerLevel},
+    {reply, ok, NewState}.
 
 
 %%--------------------------------------------------------------------
@@ -109,6 +128,32 @@ handle_call(status, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
+handle_cast(fetch_data, State=#state{fetch_interval=FetchInterval,
+				     trigger_level=TriggerLevel,
+				     sensor_data={N,M,F,A}}) ->
+    %% Fetch sensor data from the server
+    %% Prior to get this fully working, we should also need to register this application
+    %% in the server.
+    %% This includes:
+    %% - Give this aplication a role
+    %% - Give this aplication just enough capabillities to fulfill its task
+    io:format("OK, now fetch some data...~n",[]),
+    Data=
+	try
+	    rpc:call(N,M,F,A)
+	catch
+	    _:Reason ->
+		io:format("ERROR: Could not reach ~p:~p at ~p, got ~p~n",[M,F,N,Reason]),
+		0
+	end,
+    if
+	Data>TriggerLevel ->
+	    moodle_alarm:start();
+	true ->
+	    moodle_alarm:stop()
+    end,
+    start_timer(FetchInterval),
+    {noreply, State};
 handle_cast(start_alarm, State) ->
     %% Manually force start of alarm
     moodle_alarm:start(),
@@ -159,6 +204,12 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+start_timer(FetchInterval) ->
+    erlang:send_after(FetchInterval*1000,self(),{'$gen_cast',fetch_data},[]).
+
+
+
 
 %% Assumes we are running this on a Raspberry Pi with Rasbian installed ...
 read_temp() ->

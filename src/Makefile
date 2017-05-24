@@ -11,7 +11,8 @@ MODULES = \
 	moodle_app \
 	moodle_sup \
 	moodle_manager \
-	moodle_alarm
+	moodle_alarm \
+	moodle_lib
 
 
 TARGET_FILES =$(EMAKE_TARGET) $(APP_TARGET)

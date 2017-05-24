@@ -34,6 +34,7 @@
 %% @end
 %%--------------------------------------------------------------------
 start(_StartType, _StartArgs) ->
+    moodle_lib:read_cfg(),
     case moodle_sup:start_link() of
 	{ok, Pid} ->
 	    {ok, Pid};
