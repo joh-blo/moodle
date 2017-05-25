@@ -103,8 +103,10 @@ init([]) ->
 handle_call({status,Key}, _From, State) ->
     %% Read the current status    
     Reply=
-	[if Key==all;Key==alarm -> moodle_alarm:status(); true -> [] end]++
-	[if Key==all;Key==temp -> read_temp(); true -> [] end],
+	if Key==all -> [{alarm,moodle_alarm:status()},{temp,read_temp()}];
+	   Key==alarm -> moodle_alarm:status();
+	   Key==temp -> read_temp()
+	end,
     {reply, Reply, State};
 handle_call(load_cfg, _From, State) ->
     %% Read the current status    
