@@ -80,7 +80,6 @@ init([]) ->
     ExternalNMFA=moodle_lib:get_cfg(moodle_external,undefined),
     FetchInterval=moodle_lib:get_cfg(moodle_fetch_interval),
     TriggerLevel=moodle_lib:get_cfg(moodle_trigger_level),
-    io:format("SensorNode=~p~n",[ExternalNMFA]),
     start_timer(FetchInterval),
     {ok, #state{sensor_data=ExternalNMFA,
 		fetch_interval=FetchInterval,
@@ -137,7 +136,6 @@ handle_cast(fetch_data, State=#state{fetch_interval=FetchInterval,
     %% This includes:
     %% - Give this aplication a role
     %% - Give this aplication just enough capabillities to fulfill its task
-    io:format("OK, now fetch some data...~n",[]),
     Data=
 	try case rpc:call(N,M,F,A) of
 	        {badrpc,_} -> 0;
@@ -145,10 +143,11 @@ handle_cast(fetch_data, State=#state{fetch_interval=FetchInterval,
 	    end
 	catch
 	    _:Reason ->
-		io:format("ERROR: Could not reach ~p:~p at ~p, got ~p~n",[M,F,N,Reason]),
+		emd_log:error("Could not reach ~p:~p at ~p, got ~p",
+			      [M,F,N,Reason]),
 		0
 	end,
-    io:format("Data=~p TriggerLevel=~p~n",[Data,TriggerLevel]),
+    emd_log:debug("Data=~p TriggerLevel=~p",[Data,TriggerLevel]),
 
     if
 	Data>TriggerLevel ->
@@ -219,25 +218,22 @@ start_timer(FetchInterval) ->
 read_temp() ->
     case os:cmd("/opt/vc/bin/vcgencmd measure_temp") of
 	"temp="++TempStr ->
-io:format("TempStr=~p~n",[TempStr]),
-temp_to_float(TempStr,[]);
+	    io:format("TempStr=~p~n",[TempStr]),
+	    temp_to_float(TempStr,[]);
 	Other ->
-io:format("Other=~p~n",[Other]),
+	    emd_log:warning("Unexpected temperature ~p",[Other]),
 	    undefined
     end.
 
 temp_to_float([],Out) ->
-Str=lists:reverse(Out),
-io:format("JB-1 Str=~p~n",[Str]),
-
-list_to_float(Str);
+    Str=lists:reverse(Out),
+    list_to_float(Str);
 temp_to_float([H|Rest],Out) when $0=<H,H=<$9 ->
     temp_to_float(Rest,[H|Out]);
 temp_to_float([$.|Rest],Out) ->
     temp_to_float(Rest,[$.|Out]);
 temp_to_float(_,Out) ->
-Str=lists:reverse(Out),
-io:format("JB-2 Str=~p~n",[Str]),
+    Str=lists:reverse(Out),
     list_to_float(Str).
 
     

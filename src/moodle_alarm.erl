@@ -99,7 +99,7 @@ handle_call(status, _From, State=#state{alarming=Alarming}) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_cast(start_alarm, State) ->
-    Reply = run_alarm(),
+    run_alarm(),
     gen_server:cast(?MODULE,alarming),
     {noreply, State#state{alarming=true}};
 handle_cast(stop_alarm, State) ->
@@ -157,5 +157,5 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 run_alarm() ->
-	    Cmd=filename:join(code:priv_dir(moodle),"alarm.py"),
-os:cmd("sudo python "++Cmd).
+    Cmd=filename:join(code:priv_dir(moodle),"alarm.py"),
+    os:cmd("sudo python "++Cmd).
