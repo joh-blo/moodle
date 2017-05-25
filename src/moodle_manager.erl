@@ -140,8 +140,8 @@ handle_cast(fetch_data, State=#state{fetch_interval=FetchInterval,
     %% - Give this aplication just enough capabillities to fulfill its task
     Data=
 	try case rpc:call(N,M,F,A) of
-	        {badrpc,_} -> 0;
-		V -> V
+		V when is_integer(V) -> V;
+	        _ -> 0
 	    end
 	catch
 	    _:Reason ->
