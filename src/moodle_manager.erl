@@ -139,13 +139,17 @@ handle_cast(fetch_data, State=#state{fetch_interval=FetchInterval,
     %% - Give this aplication just enough capabillities to fulfill its task
     io:format("OK, now fetch some data...~n",[]),
     Data=
-	try
-	    rpc:call(N,M,F,A)
+	try case rpc:call(N,M,F,A) of
+	        {badrpc,_} -> 0;
+		V -> V
+	    end
 	catch
 	    _:Reason ->
 		io:format("ERROR: Could not reach ~p:~p at ~p, got ~p~n",[M,F,N,Reason]),
 		0
 	end,
+    io:format("Data=~p TriggerLevel=~p~n",[Data,TriggerLevel]),
+
     if
 	Data>TriggerLevel ->
 	    moodle_alarm:start();
