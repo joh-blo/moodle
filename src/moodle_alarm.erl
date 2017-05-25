@@ -98,9 +98,14 @@ handle_call(status, _From, State=#state{alarming=Alarming}) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast(start_alarm, State) ->
-    run_alarm(),
-    gen_server:cast(?MODULE,alarming),
+handle_cast(start_alarm, State=#state{alarming=Alarming}) ->
+    if
+	Alarming==false ->
+	    run_alarm(),
+	    gen_server:cast(?MODULE,alarming);
+	true ->
+	    ok
+    end,
     {noreply, State#state{alarming=true}};
 handle_cast(stop_alarm, State) ->
     {noreply, State#state{alarming=false}};
