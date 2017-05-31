@@ -12,7 +12,7 @@
 
 %% API
 -export([start_link/0,
-	 start/0,stop/0,
+	 start/1,stop/1,
 	 status/0
 	]).
 
@@ -23,7 +23,9 @@
 -define(SERVER, ?MODULE).
 
 -record(state,{
-	  alarming % (bool) Set to tru if the alrm is running
+	  alarm_db::list(),     % Known alarms
+	  alarming::boolean(),  % Set to true if an alarm is running
+	  alarming_type::atom() % Type of alarm running, if any
 	 }).
 
 %%%===================================================================
@@ -41,11 +43,11 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 
-start() ->
-    gen_server:cast(?MODULE,start_alarm).
+start(Type) ->
+    gen_server:cast(?MODULE,{start_alarm,Type}).
 
-stop() ->
-    gen_server:cast(?MODULE,stop_alarm).
+stop(Type) ->
+    gen_server:cast(?MODULE,{stop_alarm,Type}).
 
 status() ->
     gen_server:call(?MODULE,status).
@@ -68,7 +70,9 @@ status() ->
 %%--------------------------------------------------------------------
 init([]) ->
     process_flag(trap_exit, true),
-    {ok, #state{alarming=false}}.
+    AlarmDb=moodle_lib:get_cfg(moodle_alarms),
+    {ok, #state{alarm_db=AlarmDb,
+		alarming=false}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -84,8 +88,15 @@ init([]) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_call(status, _From, State=#state{alarming=Alarming}) ->
-    {reply, {alarming,Alarming}, State}.
+handle_call(status, _From, State=#state{alarming=Alarming,
+					alarming_type=AlarmingType}) ->
+    Resp=if
+	     Alarming ->
+		 [{alarming,Alarming},{alarming_type,AlarmingType}];
+	     true ->
+		 [{alarming,Alarming}]
+	 end,
+    {reply, Resp, State}.
 
 
 %%--------------------------------------------------------------------
@@ -98,21 +109,35 @@ handle_call(status, _From, State=#state{alarming=Alarming}) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast(start_alarm, State=#state{alarming=Alarming}) ->
+handle_cast({start_alarm,AlarmingType}, State=#state{alarm_db=AlarmDb,
+						     alarming=Alarming}) ->
     if
 	Alarming==false ->
-	    run_alarm(),
+	    run_alarm(AlarmingType,AlarmDb),
 	    gen_server:cast(?MODULE,alarming);
 	true ->
 	    ok
     end,
-    {noreply, State#state{alarming=true}};
-handle_cast(stop_alarm, State) ->
-    {noreply, State#state{alarming=false}};
-handle_cast(alarming, State=#state{alarming=Alarming}) ->
+    {noreply, State#state{alarming=true,
+			  alarming_type=AlarmingType}};
+handle_cast({stop_alarm,_AlarmingType}, State) ->
+    {noreply, State#state{alarming=false,
+			  alarming_type=undefined}};
+handle_cast(alarming, State=#state{alarm_db=AlarmDb,
+				   alarming=Alarming,
+				   alarming_type=AlarmingType}) ->
+
+    %% Add support for different AlaramingTypes, for example:
+    %% - Intense alarming first minute, then keep lighten with steady (lower)
+    %%   light until sensor level i low
+    %%   Steady light could havea single colour to be able to easily identify
+    %%   alarm type.
+    %% - If a new alarm occurs, while there already exists some other alarm,
+    %%   short intense alarm for some time, then mix steady colour 
+    %% - If data source is interrupted, use steady colour but do not mix.
     if
 	Alarming ->
-	    run_alarm(),
+	    run_alarm(AlarmingType,AlarmDb),
 	    % timer:sleep(3000),
 	    gen_server:cast(?MODULE,alarming);
 	true ->
@@ -161,6 +186,11 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-run_alarm() ->
-    Cmd=filename:join(code:priv_dir(moodle),"alarm.py"),
-    os:cmd("sudo python "++Cmd).
+run_alarm(AlarmingType,AlarmDb) ->
+    case lists:keysearch(AlarmingType,1,AlarmDb) of
+	{value,{_,external,ExtScript}} ->
+	    Cmd=filename:join(code:priv_dir(moodle),ExtScript),
+	    os:cmd("sudo python "++Cmd);
+	Other ->
+	    emd_log:error("Unknown alarm ~p, got ~p",[AlarmingType,Other])
+    end.
