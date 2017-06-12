@@ -23,10 +23,12 @@
 -define(SERVER, ?MODULE).
 
 -record(state,{
-	  sensor_data, % Erlang node we get the sensor data from
-	  fetch_interval, % (int) Time, in seconds, between a fetch of data
-	  trigger_level,  % (int) Sensor level to trigger alarm
-	  alarm_status % (bool) Set to true if alarm is ringing
+	  data_source::tuple(), % RPC arguments, to get the sensor data from
+	  data_source_failing::integer(), % Allowed number of failing fetches
+	  fetch_interval::integer(), % Time, in seconds, between a fetch of data
+	  trigger_levels::list(),  % Sensor level(s) to trigger alarm(s)
+	  alarm_status::boolean(),   % Set to true if alarm is ringing
+	  failing::integer()
 	 }).
 
 %%%===================================================================
@@ -77,14 +79,17 @@ load_cfg() ->
 %%--------------------------------------------------------------------
 init([]) ->
     process_flag(trap_exit, true),
-    ExternalNMFA=moodle_lib:get_cfg(moodle_external,undefined),
+    DsNMFA=moodle_lib:get_cfg(moodle_external,undefined),
+    DsMaxFail=moodle_lib:get_cfg(moodle_external_failing,10),
     FetchInterval=moodle_lib:get_cfg(moodle_fetch_interval),
-    TriggerLevel=moodle_lib:get_cfg(moodle_trigger_level),
+    TriggerLevels=moodle_lib:get_cfg(moodle_trigger_levels),
     start_timer(FetchInterval),
-    {ok, #state{sensor_data=ExternalNMFA,
+    {ok, #state{data_source=DsNMFA,
+		data_source_failing=DsMaxFail,
 		fetch_interval=FetchInterval,
-		trigger_level=TriggerLevel,
-		alarm_status=false}}.
+		trigger_levels=TriggerLevels,
+		alarm_status=false,
+		failing=0}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -110,12 +115,14 @@ handle_call({status,Key}, _From, State) ->
     {reply, Reply, State};
 handle_call(load_cfg, _From, State) ->
     %% Read the current status    
-    ExternalNMFA=moodle_lib:get_cfg(moodle_external,undefined),
+    DsNMFA=moodle_lib:get_cfg(moodle_external,undefined),
+    DsMaxFail=moodle_lib:get_cfg(moodle_external_failing,10),
     FetchInterval=moodle_lib:get_cfg(moodle_fetch_interval),
-    TriggerLevel=moodle_lib:get_cfg(moodle_trigger_level),
-    NewState=State#state{sensor_data=ExternalNMFA,
+    TriggerLevels=moodle_lib:get_cfg(moodle_trigger_levels),
+    NewState=State#state{data_source=DsNMFA,
+			 data_source_failing=DsMaxFail,
 			 fetch_interval=FetchInterval,
-			 trigger_level=TriggerLevel},
+			 trigger_levels=TriggerLevels},
     {reply, ok, NewState}.
 
 
@@ -130,42 +137,50 @@ handle_call(load_cfg, _From, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_cast(fetch_data, State=#state{fetch_interval=FetchInterval,
-				     trigger_level=TriggerLevel,
-				     sensor_data={N,M,F,A}}) ->
+				     trigger_levels=TriggerLevels,
+				     data_source={N,M,F,A},
+				     failing=Failing}) ->
     %% Fetch sensor data from the server
-    %% Prior to get this fully working, we should also need to register this application
-    %% in the server.
+    %% Prior to get this fully working, we should also need to register this
+    %% application in the server.
     %% This includes:
     %% - Give this aplication a role
     %% - Give this aplication just enough capabillities to fulfill its task
-    Data=
+    {Data,GotData}=
 	try case rpc:call(N,M,F,A) of
-		V when is_integer(V) -> V;
-	        _ -> 0
+		V when is_integer(V) -> {V,1};
+	        _ -> {0,0}
 	    end
 	catch
 	    _:Reason ->
 		emd_log:error("Could not reach ~p:~p at ~p, got ~p",
 			      [M,F,N,Reason]),
-		0
+		{0,0}
 	end,
-    emd_log:debug("Data=~p TriggerLevel=~p",[Data,TriggerLevel]),
-
-    if
-	Data>TriggerLevel ->
-	    moodle_alarm:start();
-	true ->
-	    moodle_alarm:stop()
-    end,
+    emd_log:debug("Data=~p TriggerLevel=~p",[Data,TriggerLevels]),
+    NewFailing=
+	if
+	    GotData==1 ->
+		0;
+	    true ->
+		case Failing+GotData of
+		    NF when NF>=10 ->
+			%% Alert - no contact
+			NF;
+		    NF ->
+			NF
+		end
+	end,
+    trigger_alarms(Data,TriggerLevels),
     start_timer(FetchInterval),
-    {noreply, State};
+    {noreply, State=#state{failing=NewFailing}};
 handle_cast(start_alarm, State) ->
     %% Manually force start of alarm
-    moodle_alarm:start(),
+    moodle_alarm:start(high_sensor_level),
     {noreply, State#state{alarm_status=true}};
 handle_cast(stop_alarm, State) ->
     %% Manually force stop of alarm
-    moodle_alarm:stop(),
+    moodle_alarm:stop(high_sensor_level),
     {noreply, State#state{alarm_status=false}}.
 
 %%--------------------------------------------------------------------
@@ -209,6 +224,17 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+trigger_alarms(Data,[{co2,TriggerLevel,AlarmingType}]) ->
+    if
+	Data>TriggerLevel ->
+	    moodle_alarm:start(AlarmingType);
+	true ->
+	    moodle_alarm:stop(AlarmingType)
+    end.
+
+
+
 
 start_timer(FetchInterval) ->
     erlang:send_after(FetchInterval*1000,self(),{'$gen_cast',fetch_data},[]).
