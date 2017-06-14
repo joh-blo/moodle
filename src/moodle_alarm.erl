@@ -2,6 +2,10 @@
 %%% @author Johan <>
 %%% @copyright (C) 2017, Johan
 %%% @doc
+%%%Some additional ideas for alarming includes:
+%%% - If a new alarm occurs, while there already exists some other alarm,
+%%%   short intense alarm for some time, then mix steady colour 
+%%% - If data source is interrupted, use steady colour but do not mix.
 %%%
 %%% @end
 %%% Created : 28 Apr 2017 by Johan <>
@@ -109,13 +113,17 @@ handle_call(status, _From, State=#state{alarming=Alarming,
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({start_alarm,AlarmingType}, State=#state{alarm_db=AlarmDb,
-						     alarming=Alarming}) ->
+handle_cast({start_alarm,AlarmingType},State=#state{alarm_db=AlarmDb,
+						    alarming_type=AlarmingType0,
+						    alarming=Alarming}) ->
     if
 	Alarming==false ->
+	    emd_log:debug("Raising new alarm ~p",[AlarmingType]),
 	    run_alarm(AlarmingType,AlarmDb),
 	    gen_server:cast(?MODULE,alarming);
 	true ->
+	    emd_log:debug("Raising alarm ~p, but was already alarming ~p",
+			  [AlarmingType,AlarmingType0]),
 	    ok
     end,
     {noreply, State#state{alarming=true,
@@ -126,15 +134,6 @@ handle_cast({stop_alarm,_AlarmingType}, State) ->
 handle_cast(alarming, State=#state{alarm_db=AlarmDb,
 				   alarming=Alarming,
 				   alarming_type=AlarmingType}) ->
-
-    %% Add support for different AlaramingTypes, for example:
-    %% - Intense alarming first minute, then keep lighten with steady (lower)
-    %%   light until sensor level i low
-    %%   Steady light could havea single colour to be able to easily identify
-    %%   alarm type.
-    %% - If a new alarm occurs, while there already exists some other alarm,
-    %%   short intense alarm for some time, then mix steady colour 
-    %% - If data source is interrupted, use steady colour but do not mix.
     if
 	Alarming ->
 	    run_alarm(AlarmingType,AlarmDb),
@@ -186,6 +185,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+%% Executes the actual alarm.
+%% Add support for different AlaramingTypes, for example:
+%% - Intense alarming first minute, then keep lighten with steady (lower)
+%%   light until sensor level i low
+%%   Steady light could havea single colour to be able to easily identify
+%%   alarm type.
 run_alarm(AlarmingType,AlarmDb) ->
     case lists:keysearch(AlarmingType,1,AlarmDb) of
 	{value,{_,external,ExtScript}} ->

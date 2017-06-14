@@ -20,15 +20,15 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
+-include("moodle_internal.hrl").
+
 -define(SERVER, ?MODULE).
 
 -record(state,{
 	  data_source::tuple(), % RPC arguments, to get the sensor data from
-	  data_source_failing::integer(), % Allowed number of failing fetches
 	  fetch_interval::integer(), % Time, in seconds, between a fetch of data
-	  trigger_levels::list(),  % Sensor level(s) to trigger alarm(s)
-	  alarm_status::boolean(),   % Set to true if alarm is ringing
-	  failing::integer()
+	  alarm_triggers::list(),    % Sensor level(s) to trigger alarm(s)
+	  alarm_counters::list()
 	 }).
 
 %%%===================================================================
@@ -80,16 +80,13 @@ load_cfg() ->
 init([]) ->
     process_flag(trap_exit, true),
     DsNMFA=moodle_lib:get_cfg(moodle_external,undefined),
-    DsMaxFail=moodle_lib:get_cfg(moodle_external_failing,10),
     FetchInterval=moodle_lib:get_cfg(moodle_fetch_interval),
-    TriggerLevels=moodle_lib:get_cfg(moodle_trigger_levels),
+    TriggerLevels=moodle_lib:get_cfg(moodle_alarm_triggers),
     start_timer(FetchInterval),
     {ok, #state{data_source=DsNMFA,
-		data_source_failing=DsMaxFail,
 		fetch_interval=FetchInterval,
-		trigger_levels=TriggerLevels,
-		alarm_status=false,
-		failing=0}}.
+		alarm_triggers=TriggerLevels,
+		alarm_counters=[]}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -116,13 +113,11 @@ handle_call({status,Key}, _From, State) ->
 handle_call(load_cfg, _From, State) ->
     %% Read the current status    
     DsNMFA=moodle_lib:get_cfg(moodle_external,undefined),
-    DsMaxFail=moodle_lib:get_cfg(moodle_external_failing,10),
     FetchInterval=moodle_lib:get_cfg(moodle_fetch_interval),
-    TriggerLevels=moodle_lib:get_cfg(moodle_trigger_levels),
+    TriggerLevels=moodle_lib:get_cfg(moodle_alarm_triggers),
     NewState=State#state{data_source=DsNMFA,
-			 data_source_failing=DsMaxFail,
 			 fetch_interval=FetchInterval,
-			 trigger_levels=TriggerLevels},
+			 alarm_triggers=TriggerLevels},
     {reply, ok, NewState}.
 
 
@@ -137,51 +132,40 @@ handle_call(load_cfg, _From, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_cast(fetch_data, State=#state{fetch_interval=FetchInterval,
-				     trigger_levels=TriggerLevels,
+				     alarm_triggers=TriggerLevels,
 				     data_source={N,M,F,A},
-				     failing=Failing}) ->
+				     alarm_counters=AlarmCnt}) ->
     %% Fetch sensor data from the server
     %% Prior to get this fully working, we should also need to register this
     %% application in the server.
     %% This includes:
     %% - Give this aplication a role
     %% - Give this aplication just enough capabillities to fulfill its task
-    {Data,GotData}=
+    NewAlarmCnt=
 	try case rpc:call(N,M,F,A) of
-		V when is_integer(V) -> {V,1};
-	        _ -> {0,0}
+		V when is_integer(V);is_float(V) ->
+		    emd_log:debug("V=~p TriggerLevel=~p",[V,TriggerLevels]),
+		    trigger_alarms({co2,V},TriggerLevels,AlarmCnt);
+	        _ ->
+		    emd_log:debug("No/Unknown data",[]),
+		    trigger_alarms(failing,TriggerLevels,AlarmCnt)
 	    end
 	catch
 	    _:Reason ->
 		emd_log:error("Could not reach ~p:~p at ~p, got ~p",
 			      [M,F,N,Reason]),
-		{0,0}
+		trigger_alarms(failing,TriggerLevels,AlarmCnt)
 	end,
-    emd_log:debug("Data=~p TriggerLevel=~p",[Data,TriggerLevels]),
-    NewFailing=
-	if
-	    GotData==1 ->
-		0;
-	    true ->
-		case Failing+GotData of
-		    NF when NF>=10 ->
-			%% Alert - no contact
-			NF;
-		    NF ->
-			NF
-		end
-	end,
-    trigger_alarms(Data,TriggerLevels),
     start_timer(FetchInterval),
-    {noreply, State=#state{failing=NewFailing}};
+    {noreply, State#state{alarm_counters=NewAlarmCnt}};
 handle_cast(start_alarm, State) ->
     %% Manually force start of alarm
     moodle_alarm:start(high_sensor_level),
-    {noreply, State#state{alarm_status=true}};
+    {noreply, State};
 handle_cast(stop_alarm, State) ->
     %% Manually force stop of alarm
     moodle_alarm:stop(high_sensor_level),
-    {noreply, State#state{alarm_status=false}}.
+    {noreply, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -225,13 +209,73 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-trigger_alarms(Data,[{co2,TriggerLevel,AlarmingType}]) ->
+trigger_alarms(failing,TriggerLevels,AlarmCnt) ->
+    case increase_cntrs(failing,TriggerLevels,AlarmCnt) of
+	{new_alarm,AlarmType2,NAC} ->
+	    moodle_alarm:start(AlarmType2),
+	    NAC;
+	NAC ->
+	    NAC
+    end;
+trigger_alarms({Src,Data},TriggerLevels,AlarmCnt) ->
+    #trigger{value=TriggerLevel,
+	     alarm_type=AlarmType}=lookup_trigger(TriggerLevels,Src,limit),
     if
 	Data>TriggerLevel ->
-	    moodle_alarm:start(AlarmingType);
+	    %% Increase counter
+	    case increase_cntrs(Src,TriggerLevels,AlarmCnt) of
+		{new_alarm,AlarmType2,NAC} ->
+		    moodle_alarm:start(AlarmType2),
+		    NAC;
+		NAC ->
+		    moodle_alarm:start(AlarmType),
+		    NAC
+	    end;
 	true ->
-	    moodle_alarm:stop(AlarmingType)
+	    %% Stop alarms and reset counters
+	    reset_alarms(Src,AlarmType,TriggerLevels,AlarmCnt)
     end.
+
+
+%% Increase the value of the "Key" counter with one.
+increase_cntrs(Src,TriggerLevels,AlarmCnt0) ->
+    {CntVal,AlarmCnt1}=increase_cntr(AlarmCnt0,{Src,cnt},undefined,[]),
+    #trigger{value=TriggerLevel,
+	     alarm_type=AlarmType2}=lookup_trigger(TriggerLevels,Src,cnt),
+    if
+	CntVal>TriggerLevel ->
+	    {new_alarm,AlarmType2,AlarmCnt1};
+	true ->
+	    AlarmCnt1
+    end.
+
+
+
+%% Increase the value of the "Key" counter with one.
+increase_cntr([],Key,undefined,Out) ->
+    {1,lists:reverse([{Key,1}|Out])};
+increase_cntr([],_Key,CntVal,Out) ->
+    {CntVal,lists:reverse(Out)};
+increase_cntr([{Key,Val}|Rest],Key,_CntVal,Out) ->
+    increase_cntr(Rest,Key,Val+1,[{Key,Val+1}|Out]);
+increase_cntr([H|Rest],Key,CntVal,Out) ->
+    increase_cntr(Rest,Key,CntVal,[H|Out]).
+
+
+reset_alarms(Src,AlarmType1,TriggerLevels,AlarmCnt) ->
+    moodle_alarm:stop(AlarmType1),
+    #trigger{alarm_type=AlarmType2}=lookup_trigger(TriggerLevels,Src,cnt),
+    moodle_alarm:stop(AlarmType2),
+    lists:keydelete({Src,cnt},1,AlarmCnt).
+    
+
+
+lookup_trigger([],_Src,_Type) ->    
+    not_found;
+lookup_trigger([H=#trigger{src=Src,type=Type}|_],Src,Type) -> 
+    H;
+lookup_trigger([_|Rest],Src,Type) -> 
+    lookup_trigger(Rest,Src,Type).
 
 
 
