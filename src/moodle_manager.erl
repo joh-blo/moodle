@@ -107,7 +107,8 @@ handle_call({status,Key}, _From, State) ->
     Reply=
 	if Key==all -> [{alarm,moodle_alarm:status()},{temp,read_temp()}];
 	   Key==alarm -> moodle_alarm:status();
-	   Key==temp -> read_temp()
+	   Key==temp -> read_temp();
+	   true -> {error,unknown_status}
 	end,
     {reply, Reply, State};
 handle_call(load_cfg, _From, State) ->

@@ -4,7 +4,7 @@
 %%%
 %%% @end
 %%% Created : 28 Apr 2017 by Johan <>
-%% erl -pa moodle/ebin meadow/ebin -run moodle
+%% erl -name moodle@10.10.69.120 -pa moodle/ebin meadow/ebin -run moodle -detached
 
 -module(moodle).
 
@@ -16,7 +16,7 @@
 
 %% @spec start() -> ok
 %% @doc
-%%  Start daisy and all applications it depends on, as given by configuration.
+%%  Start moodle and all applications it depends on, as given by configuration.
 %% @end
 start() ->
     application:start(?MODULE).
@@ -45,6 +45,11 @@ map_record(RecordType,Fields) ->
     case RecordType of
 	trigger ->
 	    DecFields=record_info(fields,trigger),
+	    Defaults=[],
+	    FieldList=emd_cfg:create_record_list(DecFields,Fields,Defaults,[]),
+	    list_to_tuple([RecordType|FieldList]);
+	alarm ->
+	    DecFields=record_info(fields,alarm),
 	    Defaults=[],
 	    FieldList=emd_cfg:create_record_list(DecFields,Fields,Defaults,[]),
 	    list_to_tuple([RecordType|FieldList])
